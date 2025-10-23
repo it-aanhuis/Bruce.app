@@ -21,7 +21,7 @@ button {padding:0.5rem 1rem; border-radius:5px; border:none; background:#4caf50;
 <body>
 <header>
 <h1>Bruce Controller</h1>
-<p id="status">Enter your Bruce device IP</p>
+<p id="status">Enter your Bruce device IP(s)</p>
 </header>
 <main>
 <div>
@@ -32,13 +32,17 @@ button {padding:0.5rem 1rem; border-radius:5px; border:none; background:#4caf50;
   <option value="station">Station Mode</option>
 </select>
 </div>
-<div>
-<label for="host">Device IP:</label>
-<input type="text" id="host" placeholder="192.168.4.1 or bruce.local">
-<button id="connectBtn">Connect</button>
+
+<h3>Bruce Module IPs:</h3>
+<div id="modules-container">
+  <div class="module-card">
+    <input type="text" placeholder="Enter Bruce Module IP" class="ip-input">
+    <button onclick="connectModule(this)">Connect</button>
+    <div class="status"></div>
+  </div>
 </div>
-<h3>Modules:</h3>
-<div id="modules" class="modules"></div>
+<button onclick="addModule()">Add Another Module</button>
+
 <h3>Live Logs:</h3>
 <div id="logs" class="logs"></div>
 
@@ -47,95 +51,97 @@ button {padding:0.5rem 1rem; border-radius:5px; border:none; background:#4caf50;
 <div class="credits">
   <p>This app is a fan-made interface for the open-source Bruce firmware.</p>
   <p>Official Bruce firmware repository: 
-    <a href="https://github.com/your-bruce-repo" target="_blank">https://github.com/your-bruce-repo</a>
+    <a href="https://github.com/bvdberg/Bruce" target="_blank">https://github.com/bvdberg/Bruce</a>
   </p>
   <p>Documentation and license info: 
-    <a href="https://github.com/your-bruce-repo#license" target="_blank">https://github.com/your-bruce-repo#license</a>
+    <a href="https://github.com/bvdberg/Bruce#license" target="_blank">https://github.com/bvdberg/Bruce#license</a>
   </p>
 </div>
 
 </main>
 <script>
-const connectBtn = document.getElementById('connectBtn');
-const hostInput = document.getElementById('host');
-const statusText = document.getElementById('status');
-const modulesDiv = document.getElementById('modules');
 const logsDiv = document.getElementById('logs');
-const modeSelect = document.getElementById('modeSelect');
-let ws;
 
-async function fetchModules(host){
-    const res = await fetch(`http://${host}/api/modules`);
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
+// Add new module input dynamically
+function addModule() {
+    const container = document.getElementById('modules-container');
+    const div = document.createElement('div');
+    div.className = 'module-card';
+    div.innerHTML = `
+        <input type="text" placeholder="Enter Bruce Module IP" class="ip-input">
+        <button onclick="connectModule(this)">Connect</button>
+        <div class="status"></div>
+    `;
+    container.appendChild(div);
 }
 
-async function triggerAction(host,moduleId,action,params={}){
-    const res = await fetch(`http://${host}/api/action`, {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({module:moduleId, action, params})
-    });
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-}
+// Connect to a single module
+function connectModule(btn) {
+    const moduleDiv = btn.parentElement;
+    const ip = moduleDiv.querySelector('.ip-input').value.trim();
+    const statusDiv = moduleDiv.querySelector('.status');
 
-async function detectModule(mode){
-    let host = '';
-    if(mode==='ap') host='192.168.4.1';
-    else if(mode==='station') host='bruce.local';
-    else {
-        try{ await fetchModules('bruce.local'); host='bruce.local'; }
-        catch{ host='192.168.4.1'; }
+    if(!ip){
+        statusDiv.textContent = "Please enter a valid IP address.";
+        return;
     }
-    return host;
-}
 
-function connectWebSocket(host){
-    if(ws) ws.close();
-    ws = new WebSocket(`ws://${host}/api/events`);
-    ws.onmessage = event=>{
-        const log = document.createElement('div');
-        log.className='log-entry';
-        log.textContent = `[${new Date().toLocaleTimeString()}] ${event.data}`;
-        logsDiv.appendChild(log);
-        logsDiv.scrollTop = logsDiv.scrollHeight;
-    };
-    ws.onopen = ()=>console.log('WebSocket connected');
-    ws.onclose = ()=>console.log('WebSocket closed');
-}
+    statusDiv.textContent = "Connecting to " + ip + "...";
 
-connectBtn.addEventListener('click', async ()=>{
-    const mode = modeSelect.value;
-    const host = await detectModule(mode);
-    hostInput.value = host;
-    statusText.textContent=`Connecting to ${host}...`;
-    try{
-        const data = await fetchModules(host);
-        modulesDiv.innerHTML='';
-        logsDiv.innerHTML='';
-        connectWebSocket(host);
+    // Example fetch for modules (replace with real Bruce API endpoints)
+    fetch(`http://${ip}/api/modules`)
+    .then(res => {
+        if(!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+    })
+    .then(data => {
+        statusDiv.textContent = "Connected! Modules fetched.";
+        logsDiv.innerHTML += `[${new Date().toLocaleTimeString()}] Connected to ${ip}\n`;
+
         data.modules.forEach(m=>{
-            const card=document.createElement('div');
-            card.className='module-card';
-            card.innerHTML=`<strong>${m.name}</strong><br>Status: ${m.status}<br><button>Run Action</button>`;
-            const btn=card.querySelector('button');
-            btn.addEventListener('click', async ()=>{
-                btn.disabled=true;
+            const mDiv = document.createElement('div');
+            mDiv.className='module-card';
+            mDiv.innerHTML = `<strong>${m.name}</strong><br>Status: ${m.status}<br><button>Run Action</button>`;
+            const mBtn = mDiv.querySelector('button');
+            mBtn.addEventListener('click', async ()=>{
+                mBtn.disabled = true;
                 try{
-                    const res=await triggerAction(host,m.id,'scan');
-                    alert(`Action queued, task ID: ${res.task_id}`);
-                }catch(e){ alert('Error: '+e); }
-                btn.disabled=false;
+                    const res = await fetch(`http://${ip}/api/action`, {
+                        method:'POST',
+                        headers:{'Content-Type':'application/json'},
+                        body:JSON.stringify({module:m.id, action:'scan'})
+                    });
+                    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const json = await res.json();
+                    alert(`Action queued, task ID: ${json.task_id}`);
+                    logsDiv.innerHTML += `[${new Date().toLocaleTimeString()}] Action queued on ${m.name}\n`;
+                }catch(e){
+                    alert('Error: '+e);
+                }
+                mBtn.disabled = false;
             });
-            modulesDiv.appendChild(card);
+            moduleDiv.appendChild(mDiv);
         });
-        statusText.textContent=`Connected to ${host}`;
-    }catch(err){
-        statusText.textContent='Connection failed';
+
+        // Connect WebSocket for live events
+        const ws = new WebSocket(`ws://${ip}/api/events`);
+        ws.onmessage = e=>{
+            const logEntry = document.createElement('div');
+            logEntry.className='log-entry';
+            logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${e.data}`;
+            logsDiv.appendChild(logEntry);
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+        };
+        ws.onopen = ()=>console.log('WebSocket connected');
+        ws.onclose = ()=>console.log('WebSocket closed');
+
+    })
+    .catch(err=>{
+        statusDiv.textContent = 'Connection failed';
+        logsDiv.innerHTML += `[${new Date().toLocaleTimeString()}] Failed to connect to ${ip}: ${err}\n`;
         alert('Error connecting to device: '+err);
-    }
-});
+    });
+}
 </script>
 </body>
 </html>
