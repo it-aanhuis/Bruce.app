@@ -8,14 +8,18 @@
 body { font-family: Arial; margin:0; padding:0; background:#1e1e2f; color:#fff;}
 header {padding:1rem; text-align:center; background:#2c2c44;}
 main {padding:1rem;}
-input[type=text], select {padding:0.5rem; width:60%; margin-right:0.5rem; border-radius:5px; border:none;}
-button {padding:0.5rem 1rem; border-radius:5px; border:none; background:#4caf50; color:#fff; font-weight:bold;}
+input[type=text], select {padding:0.75rem; width:calc(100% - 20px); margin:0.25rem 0; border-radius:5px; border:none; box-sizing:border-box;}
+button {padding:0.75rem 1rem; border-radius:5px; border:none; background:#4caf50; color:#fff; font-weight:bold; cursor:pointer; margin:0.25rem 0; width:100%;}
+button:hover {background:#45a049;}
 .modules, .logs {margin-top:1rem;}
-.module-card, .log-entry {background:#2c2c44; padding:0.75rem; margin-bottom:0.5rem; border-radius:5px;}
-.module-card button {margin-top:0.5rem;}
-.logs {max-height:200px; overflow-y:auto;}
+.module-card, .log-entry {background:#2c2c44; padding:0.75rem; margin-bottom:0.5rem; border-radius:5px; word-break:break-word;}
+.logs {max-height:250px; overflow-y:auto;}
 .credits {background:#2c2c44; padding:0.75rem; margin-top:1rem; border-radius:5px; font-size:0.85rem;}
 .credits a { text-decoration:underline; color:#4caf50; }
+@media (min-width: 600px) {
+  input[type=text], select {width:60%;}
+  button {width:auto; display:inline-block; margin-right:0.5rem;}
+}
 </style>
 </head>
 <body>
@@ -37,16 +41,15 @@ button {padding:0.5rem 1rem; border-radius:5px; border:none; background:#4caf50;
 <div id="modules-container">
   <div class="module-card">
     <input type="text" placeholder="Enter Bruce Module IP" class="ip-input">
-    <button onclick="connectModule(this)">Connect</button>
     <div class="status"></div>
   </div>
 </div>
 <button onclick="addModule()">Add Another Module</button>
+<button onclick="connectAllModules()">Connect All Modules</button>
 
 <h3>Live Logs:</h3>
 <div id="logs" class="logs"></div>
 
-<!-- Credits & Source -->
 <h3>Credits & Source</h3>
 <div class="credits">
   <p>This app is a fan-made interface for the open-source Bruce firmware.</p>
@@ -61,40 +64,51 @@ button {padding:0.5rem 1rem; border-radius:5px; border:none; background:#4caf50;
 </main>
 <script>
 const logsDiv = document.getElementById('logs');
+const modulesContainer = document.getElementById('modules-container');
+
+// Load saved IPs on page load
+window.onload = () => {
+    const saved = JSON.parse(localStorage.getItem('bruceIPs') || '[]');
+    saved.forEach((ip, idx) => {
+        if(idx === 0) {
+            modulesContainer.querySelector('.ip-input').value = ip;
+        } else {
+            const div = document.createElement('div');
+            div.className = 'module-card';
+            div.innerHTML = `<input type="text" class="ip-input" value="${ip}"><div class="status"></div>`;
+            modulesContainer.appendChild(div);
+        }
+    });
+}
+
+// Save current IPs to LocalStorage
+function saveIPs() {
+    const ips = Array.from(document.querySelectorAll('.ip-input')).map(i => i.value.trim()).filter(ip => ip);
+    localStorage.setItem('bruceIPs', JSON.stringify(ips));
+}
 
 // Add new module input dynamically
 function addModule() {
-    const container = document.getElementById('modules-container');
     const div = document.createElement('div');
     div.className = 'module-card';
-    div.innerHTML = `
-        <input type="text" placeholder="Enter Bruce Module IP" class="ip-input">
-        <button onclick="connectModule(this)">Connect</button>
-        <div class="status"></div>
-    `;
-    container.appendChild(div);
+    div.innerHTML = `<input type="text" placeholder="Enter Bruce Module IP" class="ip-input"><div class="status"></div>`;
+    modulesContainer.appendChild(div);
+    saveIPs();
 }
 
 // Connect to a single module
-function connectModule(btn) {
-    const moduleDiv = btn.parentElement;
-    const ip = moduleDiv.querySelector('.ip-input').value.trim();
+async function connectSingleModule(ip, moduleDiv) {
     const statusDiv = moduleDiv.querySelector('.status');
-
     if(!ip){
-        statusDiv.textContent = "Please enter a valid IP address.";
+        statusDiv.textContent = "IP required";
         return;
     }
-
     statusDiv.textContent = "Connecting to " + ip + "...";
 
-    // Example fetch for modules (replace with real Bruce API endpoints)
-    fetch(`http://${ip}/api/modules`)
-    .then(res => {
+    try {
+        const res = await fetch(`http://${ip}/api/modules`);
         if(!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-    })
-    .then(data => {
+        const data = await res.json();
         statusDiv.textContent = "Connected! Modules fetched.";
         logsDiv.innerHTML += `[${new Date().toLocaleTimeString()}] Connected to ${ip}\n`;
 
@@ -106,13 +120,13 @@ function connectModule(btn) {
             mBtn.addEventListener('click', async ()=>{
                 mBtn.disabled = true;
                 try{
-                    const res = await fetch(`http://${ip}/api/action`, {
+                    const actionRes = await fetch(`http://${ip}/api/action`, {
                         method:'POST',
                         headers:{'Content-Type':'application/json'},
                         body:JSON.stringify({module:m.id, action:'scan'})
                     });
-                    if(!res.ok) throw new Error(`HTTP ${res.status}`);
-                    const json = await res.json();
+                    if(!actionRes.ok) throw new Error(`HTTP ${actionRes.status}`);
+                    const json = await actionRes.json();
                     alert(`Action queued, task ID: ${json.task_id}`);
                     logsDiv.innerHTML += `[${new Date().toLocaleTimeString()}] Action queued on ${m.name}\n`;
                 }catch(e){
@@ -123,24 +137,33 @@ function connectModule(btn) {
             moduleDiv.appendChild(mDiv);
         });
 
-        // Connect WebSocket for live events
+        // WebSocket for live events
         const ws = new WebSocket(`ws://${ip}/api/events`);
         ws.onmessage = e=>{
             const logEntry = document.createElement('div');
             logEntry.className='log-entry';
-            logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${e.data}`;
+            logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${ip}: ${e.data}`;
             logsDiv.appendChild(logEntry);
             logsDiv.scrollTop = logsDiv.scrollHeight;
         };
-        ws.onopen = ()=>console.log('WebSocket connected');
-        ws.onclose = ()=>console.log('WebSocket closed');
+        ws.onopen = ()=>console.log(`WebSocket connected to ${ip}`);
+        ws.onclose = ()=>console.log(`WebSocket closed for ${ip}`);
 
-    })
-    .catch(err=>{
+    } catch(err){
         statusDiv.textContent = 'Connection failed';
         logsDiv.innerHTML += `[${new Date().toLocaleTimeString()}] Failed to connect to ${ip}: ${err}\n`;
-        alert('Error connecting to device: '+err);
+        console.error(err);
+    }
+}
+
+// Connect all entered modules automatically
+function connectAllModules() {
+    const modules = document.querySelectorAll('.module-card');
+    modules.forEach(moduleDiv=>{
+        const ip = moduleDiv.querySelector('.ip-input').value.trim();
+        connectSingleModule(ip, moduleDiv);
     });
+    saveIPs(); // Save after connect
 }
 </script>
 </body>
